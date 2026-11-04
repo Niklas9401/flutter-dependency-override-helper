@@ -1,10 +1,16 @@
 'use strict';
 
-/** Name of the top-level pubspec key this module manages. */
+/**
+ * Pure text processing for pubspec.yaml files.
+
+/** Name of the top-level pubspec key that holds the overrides. */
 const SECTION = 'dependency_overrides';
 
-/** Matches the section header line; capture group 1 is whatever follows the colon. */
-const SECTION_RE = /^dependency_overrides\s*:(.*)$/;
+/** Sections that contain regular (removable) dependencies. */
+const DEPENDENCY_SECTIONS = ['dependencies', 'dev_dependencies'];
+
+/** Every section this module can read entries from. */
+const ALL_SECTIONS = [...DEPENDENCY_SECTIONS, SECTION];
 
 /** Matches an indented `key:` line; capture group 1 = indentation, group 2 = key. */
 const KEY_RE = /^(\s+)([A-Za-z0-9_]+)\s*:/;
@@ -17,7 +23,7 @@ const KEY_RE = /^(\s+)([A-Za-z0-9_]+)\s*:/;
 
 /**
  * @typedef {Object} Section
- * @property {number} start  Index of the `dependency_overrides:` header line.
+ * @property {number} start  Index of the section header line (e.g. `dependency_overrides:`).
  * @property {number} end    Exclusive index after the last line that belongs to the section.
  * @property {string} inline Anything written after the colon on the header line (comments removed),
  *                           e.g. `{}` for an empty inline map; empty string for a normal block.
@@ -26,8 +32,19 @@ const KEY_RE = /^(\s+)([A-Za-z0-9_]+)\s*:/;
 /**
  * @typedef {Object} EntryRange
  * @property {string} name  Package name of the entry.
- * @property {number} start Index of the entry's first line (`name:`).
+ * @property {number} start Index of the entry's first line (`name:`), equals the 0-based editor line.
  * @property {number} end   Exclusive index after the entry's last line.
+ */
+
+/**
+ * @typedef {'local'|'git'|'sdk'|'hosted'|null} EntryType
+ */
+
+/**
+ * @typedef {Object} PackageEntry
+ * @property {string}    name Package name.
+ * @property {number}    line 0-based line of the entry in the file.
+ * @property {EntryType} type How the package is declared in its section.
  */
 
 /**
@@ -118,7 +135,7 @@ function isBlankOrComment(line) {
 }
 
 /**
- * Locates the `dependency_overrides` section.
+ * Locates a top-level section such as `dependencies` or `dependency_overrides`.
  *
  * The section ends right before the next top-level key (a non-blank,
  * non-comment line with indentation 0). Trailing blank lines and top-level
@@ -126,14 +143,17 @@ function isBlankOrComment(line) {
  * inserted directly after the last indented line.
  *
  * @param {string[]} lines File content split into lines.
+ * @param {string}   name  Section key, e.g. `dev_dependencies`.
  * @returns {Section|null} The section, or null if the file has none.
  */
-function findSection(lines) {
-  const start = lines.findIndex((l) => SECTION_RE.test(l));
+function findSectionNamed(lines, name) {
+  // The anchor (^) guarantees `dependencies` never matches `dev_dependencies`.
+  const re = new RegExp(`^${name}\\s*:(.*)$`);
+  const start = lines.findIndex((l) => re.test(l));
   if (start === -1) return null;
 
-  // Text after "dependency_overrides:" without a trailing comment, e.g. "{}".
-  const rest = SECTION_RE.exec(lines[start])[1].replace(/#.*$/, '').trim();
+  // Text after "<name>:" without a trailing comment, e.g. "{}".
+  const rest = re.exec(lines[start])[1].replace(/#.*$/, '').trim();
 
   let end = start + 1;
   for (let i = start + 1; i < lines.length; i++) {
@@ -149,6 +169,16 @@ function findSection(lines) {
 }
 
 /**
+ * Shortcut for {@link findSectionNamed} with the `dependency_overrides` section.
+ *
+ * @param {string[]} lines File content split into lines.
+ * @returns {Section|null}
+ */
+function findSection(lines) {
+  return findSectionNamed(lines, SECTION);
+}
+
+/**
  * Finds the individual package entries inside a section.
  *
  * The entry indentation is derived from the shallowest non-comment line in the
@@ -157,7 +187,7 @@ function findSection(lines) {
  * `git:` and its children).
  *
  * @param {string[]} lines   File content split into lines.
- * @param {Section}  section Section returned by {@link findSection}.
+ * @param {Section}  section Section returned by {@link findSectionNamed}.
  * @returns {EntryRange[]} Entries in file order.
  */
 function parseEntries(lines, section) {
@@ -190,46 +220,24 @@ function parseEntries(lines, section) {
 }
 
 /**
- * Lists the names of all packages currently overridden in the pubspec.
- *
- * @param {string} text Complete pubspec.yaml content.
- * @returns {string[]} Package names in file order (empty if there is no section).
- */
-function listOverrides(text) {
-  const { lines } = parse(text);
-  const section = findSection(lines);
-  if (!section) return [];
-  return parseEntries(lines, section).map((e) => e.name);
-}
-
-/**
- * Determines HOW a package is currently overridden.
+ * Determines how a single entry is declared.
  *
  * Only the keys on the first level below the package name are inspected, so a
  * nested `path:` inside a `git:` block is correctly reported as `'git'`.
  * Inline forms such as `foo: ^1.0.0` or `foo: {path: ../foo}` are recognised too.
  *
- * @example
- * getOverrideType(text, 'foo') // → 'local' | 'git' | 'sdk' | 'hosted' | null
- *
- * @param {string} text        Complete pubspec.yaml content.
- * @param {string} packageName Package to look up.
- * @returns {'local'|'git'|'sdk'|'hosted'|null} The override type, or null if the package is not overridden
- *          (or the form is not recognised).
+ * @param {string[]}   lines File content split into lines.
+ * @param {EntryRange} entry Entry returned by {@link parseEntries}.
+ * @returns {EntryType} The entry type, or null if the form is not recognised.
  */
-function getOverrideType(text, packageName) {
-  const { lines } = parse(text);
-  const section = findSection(lines);
-  if (!section) return null;
-
-  const entry = parseEntries(lines, section).find((e) => e.name === packageName);
-  if (!entry) return null;
-
+function entryType(lines, entry) {
   // Inline value on the same line, e.g. `foo: ^1.0.0` or `foo: {path: ../foo}`.
-  const rest = lines[entry.start].slice(lines[entry.start].indexOf(':') + 1).replace(/#.*$/, '').trim();
+  const header = lines[entry.start];
+  const rest = header.slice(header.indexOf(':') + 1).replace(/#.*$/, '').trim();
   if (rest) {
     if (/\bgit\s*:/.test(rest)) return 'git';
     if (/\bpath\s*:/.test(rest)) return 'local';
+    if (/\bsdk\s*:/.test(rest)) return 'sdk';
     return 'hosted'; // plain version constraint
   }
 
@@ -252,38 +260,92 @@ function getOverrideType(text, packageName) {
 }
 
 /**
+ * Lists the names of all packages currently overridden in the pubspec.
+ *
+ * @param {string} text Complete pubspec.yaml content.
+ * @returns {string[]} Package names in file order (empty if there is no section).
+ */
+function listOverrides(text) {
+  const { lines } = parse(text);
+  const section = findSection(lines);
+  if (!section) return [];
+  return parseEntries(lines, section).map((e) => e.name);
+}
+
+/**
+ * Lists the entries of `dependencies`, `dev_dependencies` and
+ * `dependency_overrides` together with their line numbers and types.
+ * This is what the CodeLens provider uses to know where to place its links.
+ *
+ * @param {string} text Complete pubspec.yaml content.
+ * @returns {Object<string, PackageEntry[]>} Entries per section name; sections that don't exist map to [].
+ */
+function listPackageEntries(text) {
+  const { lines } = parse(text);
+  /** @type {Object<string, PackageEntry[]>} */
+  const result = {};
+  for (const name of ALL_SECTIONS) {
+    const section = findSectionNamed(lines, name);
+    result[name] = section
+      ? parseEntries(lines, section).map((e) => ({ name: e.name, line: e.start, type: entryType(lines, e) }))
+      : [];
+  }
+  return result;
+}
+
+/**
+ * Determines HOW a package is currently overridden.
+ *
+ * @example
+ * getOverrideType(text, 'foo') // → 'local' | 'git' | 'sdk' | 'hosted' | null
+ *
+ * @param {string} text        Complete pubspec.yaml content.
+ * @param {string} packageName Package to look up.
+ * @returns {EntryType} The override type, or null if the package is not overridden
+ *          (or the form is not recognised).
+ */
+function getOverrideType(text, packageName) {
+  const { lines } = parse(text);
+  const section = findSection(lines);
+  if (!section) return null;
+
+  const entry = parseEntries(lines, section).find((e) => e.name === packageName);
+  return entry ? entryType(lines, entry) : null;
+}
+
+/**
  * Normalises an empty inline map (`dependency_overrides: {}`) to block style
  * so entries can be appended below it. Non-empty inline maps are not supported.
  *
  * Mutates `lines` in place.
  *
  * @param {string[]} lines   File content split into lines.
- * @param {Section}  section Section returned by {@link findSection}.
+ * @param {Section}  section Section returned by {@link findSectionNamed}.
+ * @param {string}   [name]  Section key, used for the header and the error message.
  * @throws {Error} If the section is a non-empty inline map.
  */
-function normalizeInline(lines, section) {
+function normalizeInline(lines, section, name = SECTION) {
   if (!section.inline) return; // already block style
   if (/^\{\s*\}$/.test(section.inline)) {
-    lines[section.start] = `${SECTION}:`;
+    lines[section.start] = `${name}:`;
   } else {
-    throw new Error(
-      'dependency_overrides is written as an inline map – please convert it to block style once.'
-    );
+    throw new Error(`${name} is written as an inline map – please convert it to block style once.`);
   }
 }
 
 /**
- * Removes the given packages from the section. Mutates `lines` in place and
+ * Removes the given packages from a section. Mutates `lines` in place and
  * leaves the (possibly now empty) section header untouched.
  *
- * @param {string[]} lines File content split into lines.
- * @param {string[]} names Package names to remove.
+ * @param {string[]} lines         File content split into lines.
+ * @param {string[]} names         Package names to remove.
+ * @param {string}   [sectionName] Section to remove from; defaults to `dependency_overrides`.
  * @returns {boolean} True if at least one entry was removed.
  */
-function removeEntries(lines, names) {
-  const section = findSection(lines);
+function removeEntries(lines, names, sectionName = SECTION) {
+  const section = findSectionNamed(lines, sectionName);
   if (!section) return false;
-  normalizeInline(lines, section);
+  normalizeInline(lines, section, sectionName);
 
   const entries = parseEntries(lines, section).filter((e) => names.includes(e.name));
   // Delete bottom-up so the indices of earlier entries stay valid while splicing.
@@ -347,6 +409,26 @@ function removeOverrides(text, names) {
 }
 
 /**
+ * Removes packages from `dependencies` or `dev_dependencies`. In contrast to
+ * {@link removeOverrides} the section header is always kept, because pubspecs
+ * conventionally keep those sections even when they are empty.
+ *
+ * @param {string}   text        Complete pubspec.yaml content.
+ * @param {string}   sectionName `dependencies` or `dev_dependencies`.
+ * @param {string[]} names       Package names to remove.
+ * @returns {string} The updated file content.
+ * @throws {Error} If `sectionName` is not a dependency section.
+ */
+function removeDependencies(text, sectionName, names) {
+  if (!DEPENDENCY_SECTIONS.includes(sectionName)) {
+    throw new Error(`Unsupported section: ${sectionName}`);
+  }
+  const { eol, lines } = parse(text);
+  removeEntries(lines, names, sectionName);
+  return lines.join(eol).replace(/\s*$/, '') + eol;
+}
+
+/**
  * Reads the package's own name from the top-level `name:` key.
  *
  * @param {string} text Complete pubspec.yaml content.
@@ -372,9 +454,11 @@ module.exports = {
   renderLocal,
   renderGit,
   listOverrides,
+  listPackageEntries,
   getOverrideType,
   applyOverrides,
   removeOverrides,
+  removeDependencies,
   packageName,
   usesFlutter,
 };

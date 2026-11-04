@@ -14,7 +14,34 @@ const ps = require('./pubspec');
 const IGNORED_DIRS = new Set(['node_modules', 'build', 'ios', 'android', 'macos', 'linux', 'windows', 'web', 'lib', 'test']);
 
 /**
- * Extension entry point. Registers all commands declared in package.json.
+ * How long (ms) the result of scanning the local packages folders is reused.
+ * CodeLens is requested after every keystroke, so the file system must not be
+ * walked each time. Explicit actions always bypass the cache.
+ */
+const LOCAL_SCAN_TTL_MS = 15000;
+
+/**
+ * Cache of local package scans, keyed by pubspec + relevant settings.
+ * @type {Map<string, {time: number, packages: LocalPackage[]}>}
+ */
+const localScanCache = new Map();
+
+/**
+ * @typedef {Object} LocalPackage
+ * @property {string} name Package name from its pubspec.yaml.
+ * @property {string} dir  Absolute path of the package directory.
+ */
+
+/**
+ * @typedef {Object} GitRepo
+ * @property {string} name  Package name.
+ * @property {string} url   Git URL.
+ * @property {string} [path] Sub-folder inside the repository (monorepo).
+ */
+
+/**
+ * Extension entry point. Registers all commands declared in package.json,
+ * the internal CodeLens commands and the CodeLens provider.
  * Every command handler is wrapped so that unexpected errors are shown to the
  * user as an error message instead of failing silently.
  *
@@ -23,7 +50,7 @@ const IGNORED_DIRS = new Set(['node_modules', 'build', 'ios', 'android', 'macos'
 function activate(context) {
   /**
    * Registers one command whose handler receives the extension context first.
-   * @param {string} id Command id from package.json.
+   * @param {string} id Command id.
    * @param {(context: vscode.ExtensionContext, ...args: any[]) => Promise<void>} fn Async handler.
    */
   const reg = (id, fn) =>
@@ -32,11 +59,246 @@ function activate(context) {
         fn(context, ...args).catch((e) => vscode.window.showErrorMessage(`Pubspec Overrides: ${e.message || e}`))
       )
     );
+
+  // Commands visible in the Command Palette (declared in package.json).
   reg('pubspecOverrides.add', cmdAdd);
   reg('pubspecOverrides.addLocal', cmdAddLocal);
   reg('pubspecOverrides.addGit', cmdAddGit);
   reg('pubspecOverrides.remove', cmdRemove);
   reg('pubspecOverrides.removeAll', cmdRemoveAll);
+
+  // Internal commands triggered by the CodeLens links (intentionally not in package.json).
+  reg('pubspecOverrides.codeLens.addOverride', lensAddOverride);
+  reg('pubspecOverrides.codeLens.removeOverride', lensRemoveOverride);
+  reg('pubspecOverrides.codeLens.switchOverride', lensSwitchOverride);
+  reg('pubspecOverrides.codeLens.removePackage', lensRemovePackage);
+
+  // Inline links above the package names in every pubspec.yaml.
+  const provider = new PubspecCodeLensProvider();
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider({ pattern: '**/pubspec.yaml' }, provider),
+    // Changed folders/repos change which links are offered → drop the cache and redraw.
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('pubspecOverrides')) {
+        localScanCache.clear();
+        provider.refresh();
+      }
+    })
+  );
+}
+
+// ---------- CodeLens ----------
+
+/**
+ * Provides clickable links ("CodeLens", like Run | Debug above tests) above
+ * the package names of a pubspec.yaml:
+ *
+ *  - on `dependencies` / `dev_dependencies` entries:
+ *      "Add override"   – only if the package is available in the configured
+ *                         local folders or Git repos and not yet overridden
+ *      "Remove package" – removes the dependency
+ *  - on `dependency_overrides` entries:
+ *      "Remove override"
+ *      "Switch to Local" / "Switch to Git" – only if the package is available
+ *                         as the other type
+ *
+ * SDK dependencies (`flutter`, `flutter_test`, …) get no links.
+ */
+class PubspecCodeLensProvider {
+  constructor() {
+    this._emitter = new vscode.EventEmitter();
+    /** Lets VS Code know that the lenses should be requested again. */
+    this.onDidChangeCodeLenses = this._emitter.event;
+  }
+
+  /** Forces VS Code to re-request the lenses (e.g. after a settings change). */
+  refresh() {
+    this._emitter.fire();
+  }
+
+  /**
+   * Builds the lenses for one pubspec document.
+   *
+   * @param {vscode.TextDocument} document The pubspec.yaml being displayed.
+   * @returns {vscode.CodeLens[]} The links; empty if the feature is disabled.
+   */
+  provideCodeLenses(document) {
+    const cfg = vscode.workspace.getConfiguration('pubspecOverrides', document.uri);
+    if (!cfg.get('codeLens.enabled', true)) return [];
+
+    const entries = ps.listPackageEntries(document.getText());
+    const localByName = new Map(getLocalPackages(document.uri).map((p) => [p.name, p]));
+    const gitByName = new Map(getGitRepos(cfg).map((r) => [r.name, r]));
+    const overridden = new Set(entries.dependency_overrides.map((e) => e.name));
+
+    /** @type {vscode.CodeLens[]} */
+    const lenses = [];
+    /**
+     * Adds one link at the start of `line`.
+     * @param {number} line 0-based line.
+     * @param {string} title Text shown in the editor (supports $(codicon) syntax).
+     * @param {string} command Internal command id.
+     * @param {any[]} args Command arguments.
+     * @param {string} tooltip Hover text.
+     */
+    const add = (line, title, command, args, tooltip) =>
+      lenses.push(new vscode.CodeLens(new vscode.Range(line, 0, line, 0), { title, command, arguments: args, tooltip }));
+
+    // Regular dependencies: add an override / remove the package.
+    for (const section of ['dependencies', 'dev_dependencies']) {
+      for (const e of entries[section]) {
+        if (e.type === 'sdk') continue; // flutter, flutter_test, … – nothing sensible to do
+        if (!overridden.has(e.name) && (localByName.has(e.name) || gitByName.has(e.name))) {
+          add(e.line, '$(add) Add override', 'pubspecOverrides.codeLens.addOverride', [document.uri, e.name],
+            `Override "${e.name}" with a local package or a Git reference`);
+        }
+        add(e.line, '$(trash) Remove package', 'pubspecOverrides.codeLens.removePackage', [document.uri, e.name, section],
+          `Remove "${e.name}" from ${section}`);
+      }
+    }
+
+    // Existing overrides: remove / switch to the other type (if available).
+    for (const e of entries.dependency_overrides) {
+      add(e.line, '$(trash) Remove override', 'pubspecOverrides.codeLens.removeOverride', [document.uri, e.name],
+        `Remove the override of "${e.name}"`);
+      if (e.type !== 'local' && localByName.has(e.name)) {
+        add(e.line, '$(arrow-swap) Switch to Local', 'pubspecOverrides.codeLens.switchOverride', [document.uri, e.name, 'local'],
+          `Use the local package of "${e.name}" instead`);
+      }
+      if (e.type !== 'git' && gitByName.has(e.name)) {
+        add(e.line, '$(arrow-swap) Switch to Git', 'pubspecOverrides.codeLens.switchOverride', [document.uri, e.name, 'git'],
+          `Use the configured Git repository of "${e.name}" instead`);
+      }
+    }
+    return lenses;
+  }
+}
+
+/**
+ * CodeLens action "Add override" for a package from `dependencies`.
+ * If the package is available both locally and via Git, the user chooses;
+ * otherwise the only available type is used directly.
+ *
+ * @param {vscode.ExtensionContext} _context Unused.
+ * @param {vscode.Uri} uri  The pubspec.
+ * @param {string}     name Package name.
+ * @returns {Promise<void>}
+ */
+async function lensAddOverride(_context, uri, name) {
+  const cfg = vscode.workspace.getConfiguration('pubspecOverrides', uri);
+  const hasLocal = !!findLocalPackage(uri, name);
+  const hasGit = !!findGitRepo(cfg, name);
+
+  let type;
+  if (hasLocal && hasGit) {
+    const choice = await vscode.window.showQuickPick(
+      [
+        { label: '$(folder) Local', description: 'Package from local folders', id: 'local' },
+        { label: '$(git-branch) Git', description: 'Configured repo with reference', id: 'git' },
+      ],
+      { placeHolder: `Override "${name}" with…` }
+    );
+    if (!choice) return;
+    type = choice.id;
+  } else if (hasLocal || hasGit) {
+    type = hasLocal ? 'local' : 'git';
+  } else {
+    throw new Error(`"${name}" was not found in the configured local folders or Git repos.`);
+  }
+  await writeSingleOverride(uri, name, type);
+}
+
+/**
+ * CodeLens action "Switch to Local/Git" for an existing override.
+ * The old override is replaced by one of the requested type.
+ *
+ * @param {vscode.ExtensionContext} _context Unused.
+ * @param {vscode.Uri}   uri    The pubspec.
+ * @param {string}       name   Package name.
+ * @param {'local'|'git'} target Type to switch to.
+ * @returns {Promise<void>}
+ */
+async function lensSwitchOverride(_context, uri, name, target) {
+  // An explicit click on "Switch to …" is already the confirmation – no type-conflict dialog.
+  await writeSingleOverride(uri, name, target);
+}
+
+/**
+ * CodeLens action "Remove override".
+ *
+ * @param {vscode.ExtensionContext} _context Unused.
+ * @param {vscode.Uri} uri  The pubspec.
+ * @param {string}     name Package name whose override is removed.
+ * @returns {Promise<void>}
+ */
+async function lensRemoveOverride(_context, uri, name) {
+  const { doc, text } = await readPubspec(uri);
+  await writePubspec(doc, ps.removeOverrides(text, [name]));
+}
+
+/**
+ * CodeLens action "Remove package": deletes a dependency from the section
+ * it was clicked in, after a modal confirmation. An existing override of the
+ * same package is left untouched (it can be removed separately).
+ *
+ * @param {vscode.ExtensionContext} _context Unused.
+ * @param {vscode.Uri} uri     The pubspec.
+ * @param {string}     name    Package name.
+ * @param {string}     section `dependencies` or `dev_dependencies`.
+ * @returns {Promise<void>}
+ */
+async function lensRemovePackage(_context, uri, name, section) {
+  const ok = await vscode.window.showWarningMessage(
+    `Remove "${name}" from ${section}?`,
+    { modal: true },
+    'Remove'
+  );
+  if (!ok) return;
+  const { doc, text } = await readPubspec(uri);
+  await writePubspec(doc, ps.removeDependencies(text, section, [name]));
+}
+
+/**
+ * Creates an override of the given type for one package and writes it,
+ * replacing an existing override of that package.
+ * Does nothing if the user cancels the Git reference prompt.
+ *
+ * @param {vscode.Uri}    uri  The pubspec.
+ * @param {string}        name Package name.
+ * @param {'local'|'git'} type Override type to create.
+ * @returns {Promise<void>}
+ */
+async function writeSingleOverride(uri, name, type) {
+  const entry = await buildOverrideEntry(uri, name, type);
+  if (!entry) return; // cancelled
+  const { doc } = await readPubspec(uri);
+  await writePubspec(doc, ps.applyOverrides(doc.getText(), [entry]));
+}
+
+/**
+ * Builds the YAML entry for one package: a relative `path:` for local
+ * overrides, or a `git:` block for which the user is asked for the reference.
+ *
+ * @param {vscode.Uri}    uri  The pubspec (determines relative paths and settings scope).
+ * @param {string}        name Package name.
+ * @param {'local'|'git'} type Override type.
+ * @returns {Promise<import('./pubspec').OverrideEntry|undefined>} The entry, or undefined if the user cancelled.
+ * @throws {Error} If the package is not available as the requested type.
+ */
+async function buildOverrideEntry(uri, name, type) {
+  const cfg = vscode.workspace.getConfiguration('pubspecOverrides', uri);
+
+  if (type === 'local') {
+    const pkg = findLocalPackage(uri, name);
+    if (!pkg) throw new Error(`"${name}" was not found in the configured local folders.`);
+    return ps.renderLocal(name, toPosix(path.relative(path.dirname(uri.fsPath), pkg.dir)));
+  }
+
+  const repo = findGitRepo(cfg, name);
+  if (!repo) throw new Error(`"${name}" is not configured in pubspecOverrides.gitRepos.`);
+  const ref = await askGitRef(`Git reference for ${name}`, await defaultGitRef(uri));
+  if (ref === undefined) return undefined;
+  return ps.renderGit(name, repo.url, ref.trim(), repo.path);
 }
 
 // ---------- Locating & writing the pubspec ----------
@@ -212,28 +474,11 @@ async function cmdAddLocal() {
     }
   }
 
-  // Scan every configured folder; folders that don't exist are skipped silently.
+  // Scan every configured folder (missing folders are skipped silently) and
+  // never offer the package itself – it must not override its own dependency.
   const self = ps.packageName(text);
   const scanDepth = cfg.get('scanDepth') ?? 2;
-  let allPkgs = [];
-
-  for (const rawFolder of folders) {
-    const resolved = resolveFolder(rawFolder, uri);
-    if (resolved && fs.existsSync(resolved)) {
-      const found = findPackages(resolved, scanDepth);
-      allPkgs.push(...found);
-    }
-  }
-
-  // De-duplicate by package name (first folder in the list wins) and never
-  // offer the package itself – it must not override its own dependency.
-  const uniquePkgsMap = new Map();
-  for (const p of allPkgs) {
-    if (p.name !== self && !uniquePkgsMap.has(p.name)) {
-      uniquePkgsMap.set(p.name, p);
-    }
-  }
-  const pkgs = Array.from(uniquePkgsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const pkgs = scanLocalPackages(uri, folders, scanDepth).filter((p) => p.name !== self);
 
   if (!pkgs.length) throw new Error(`No packages (pubspec.yaml) found in the specified folders.`);
 
@@ -277,8 +522,7 @@ async function cmdAddGit() {
   const { doc, text } = await readPubspec(uri);
   const cfg = vscode.workspace.getConfiguration('pubspecOverrides', uri);
 
-  // Ignore incomplete setting entries (name and url are mandatory).
-  const repos = (cfg.get('gitRepos') || []).filter((r) => r && r.name && r.url);
+  const repos = getGitRepos(cfg);
   if (!repos.length) {
     const a = await vscode.window.showWarningMessage(
       'No Git repos configured (pubspecOverrides.gitRepos).',
@@ -310,16 +554,14 @@ async function cmdAddGit() {
   }
 
   // Pre-fill with the current branch; fall back to the configured default ref.
-  const defaultRef = (await currentBranch(path.dirname(uri.fsPath))) || cfg.get('defaultRef') || '';
+  const defaultRef = await defaultGitRef(uri);
   const entries = [];
   for (const item of picked) {
-    const ref = await vscode.window.showInputBox({
-      title: `Git reference for ${item.repo.name} (${picked.indexOf(item) + 1}/${picked.length})`,
-      prompt: 'Branch, Tag or Commit Hash – empty = Default Branch of the Repo',
-      value: defaultRef,
-      ignoreFocusOut: true,
-    });
-    if (ref === undefined) return;
+    const ref = await askGitRef(
+      `Git reference for ${item.repo.name} (${picked.indexOf(item) + 1}/${picked.length})`,
+      defaultRef
+    );
+    if (ref === undefined) return; // Escape pressed → cancel the whole command, write nothing
     entries.push(ps.renderGit(item.repo.name, item.repo.url, ref.trim(), item.repo.path));
   }
 
@@ -370,6 +612,110 @@ async function cmdRemoveAll() {
 // ---------- Helpers ----------
 
 /**
+ * Reads the valid Git repos from the settings. Incomplete entries
+ * (name and url are mandatory) are ignored.
+ *
+ * @param {vscode.WorkspaceConfiguration} cfg Configuration of the `pubspecOverrides` section.
+ * @returns {GitRepo[]}
+ */
+function getGitRepos(cfg) {
+  return (cfg.get('gitRepos') || []).filter((r) => r && r.name && r.url);
+}
+
+/**
+ * @param {vscode.WorkspaceConfiguration} cfg  Configuration of the `pubspecOverrides` section.
+ * @param {string}                        name Package name.
+ * @returns {GitRepo|undefined} The configured repo for that package, if any.
+ */
+function findGitRepo(cfg, name) {
+  return getGitRepos(cfg).find((r) => r.name === name);
+}
+
+/**
+ * Scans the given folders for local packages. If the same package name occurs
+ * in several folders, the first folder in the list wins.
+ *
+ * @param {vscode.Uri} uri       The pubspec (needed to resolve relative folders).
+ * @param {string[]}   folders   Raw folder values from the settings.
+ * @param {number}     scanDepth How many levels below each folder are searched.
+ * @returns {LocalPackage[]} Unique packages sorted by name.
+ */
+function scanLocalPackages(uri, folders, scanDepth) {
+  const unique = new Map();
+  for (const rawFolder of folders) {
+    const resolved = resolveFolder(rawFolder, uri);
+    if (!resolved || !fs.existsSync(resolved)) continue; // missing folders are skipped silently
+    for (const p of findPackages(resolved, scanDepth)) {
+      if (!unique.has(p.name)) unique.set(p.name, p);
+    }
+  }
+  return Array.from(unique.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Local packages for the folders configured in the settings, with a short-lived
+ * cache so the CodeLens provider doesn't walk the file system on every keystroke.
+ *
+ * @param {vscode.Uri} uri          The pubspec.
+ * @param {boolean}    [fresh=false] Bypass the cache (used by explicit user actions).
+ * @returns {LocalPackage[]} Empty if no folders are configured.
+ */
+function getLocalPackages(uri, fresh = false) {
+  const cfg = vscode.workspace.getConfiguration('pubspecOverrides', uri);
+  const folders = cfg.get('packagesFolders') || [];
+  if (!folders.length) return []; // no dialog here – lenses must never prompt on their own
+  const scanDepth = cfg.get('scanDepth') ?? 2;
+
+  const key = `${uri.toString()}|${JSON.stringify(folders)}|${scanDepth}`;
+  const hit = localScanCache.get(key);
+  if (!fresh && hit && Date.now() - hit.time < LOCAL_SCAN_TTL_MS) return hit.packages;
+
+  const packages = scanLocalPackages(uri, folders, scanDepth);
+  localScanCache.set(key, { time: Date.now(), packages });
+  return packages;
+}
+
+/**
+ * Looks up a single local package by name (always with a fresh scan).
+ *
+ * @param {vscode.Uri} uri  The pubspec.
+ * @param {string}     name Package name.
+ * @returns {LocalPackage|undefined}
+ */
+function findLocalPackage(uri, name) {
+  return getLocalPackages(uri, true).find((p) => p.name === name);
+}
+
+/**
+ * Default value for the Git reference prompt: the currently checked-out branch
+ * of the project, falling back to the `pubspecOverrides.defaultRef` setting.
+ *
+ * @param {vscode.Uri} uri The pubspec.
+ * @returns {Promise<string>} May be empty.
+ */
+async function defaultGitRef(uri) {
+  const cfg = vscode.workspace.getConfiguration('pubspecOverrides', uri);
+  return (await currentBranch(path.dirname(uri.fsPath))) || cfg.get('defaultRef') || '';
+}
+
+/**
+ * Asks the user for a Git reference.
+ *
+ * @param {string} title      Title of the input box.
+ * @param {string} defaultRef Pre-filled value.
+ * @returns {Promise<string|undefined>} The entered text (may be empty = default branch),
+ *          or undefined if the user cancelled with Escape.
+ */
+function askGitRef(title, defaultRef) {
+  return vscode.window.showInputBox({
+    title,
+    prompt: 'Branch, Tag or Commit Hash – empty = Default Branch of the Repo',
+    value: defaultRef,
+    ignoreFocusOut: true, // don't dismiss the input when the user clicks elsewhere
+  });
+}
+
+/**
  * Turns a folder from the settings into an absolute path.
  *
  * Supported forms: absolute paths, `${workspaceFolder}/...`, `~/...` (home
@@ -377,7 +723,7 @@ async function cmdRemoveAll() {
  *
  * @param {string}     value       Raw folder value from the settings.
  * @param {vscode.Uri} pubspecUri  The pubspec being edited; determines which workspace folder is meant.
- * @returns {string|null} Absollute path, or null for an empty value.
+ * @returns {string|null} Absolute path, or null for an empty value.
  */
 function resolveFolder(value, pubspecUri) {
   if (!value) return null;
@@ -395,7 +741,7 @@ function resolveFolder(value, pubspecUri) {
  *
  * @param {string} root     Absolute folder to start in (depth 0 = the folder itself).
  * @param {number} maxDepth How many levels below `root` are searched.
- * @returns {{name: string, dir: string}[]} Packages sorted by name; `dir` is the absolute package directory.
+ * @returns {LocalPackage[]} Packages sorted by name.
  */
 function findPackages(root, maxDepth) {
   const result = [];
@@ -446,6 +792,6 @@ function currentBranch(cwd) {
  */
 const toPosix = (p) => p.split(path.sep).join('/');
 
-/** Called by VS Code when the extension is deactivated; */
+/** Called by VS Code when the extension is deactivated; nothing to clean up. */
 function deactivate() {}
 module.exports = { activate, deactivate };

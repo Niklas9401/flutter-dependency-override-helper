@@ -2,8 +2,12 @@
   "name": "flutter-dependency-override-helper",
   "displayName": "Flutter Dependency Override Helper",
   "description": "Quick insert local or git dependency_overrides in pubspec",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "publisher": "NiklasWeiblen",
+  "repository": {
+    "url": "https://github.com/Niklas9401/flutter-dependency-override-helper.git",
+    "type": "git"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -19,7 +23,10 @@
   ],
   "main": "./extension.js",
   "icon": "icon.png",
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "workspaceContains:**/pubspec.yaml"
+  ],
   "contributes": {
     "commands": [
       {
@@ -58,7 +65,7 @@
         "pubspecOverrides.packagesFolders": {
           "type": "array",
           "default": [],
-          "markdownDescription": "Directories in which your local packages lie (absolute or relative to the workspace; `${workspaceFolder}` and `~` are supported).",
+          "markdownDescription": "Directories in which your local packages are located (absolute or relative to the workspace; `${workspaceFolder}` and `~` are supported).",
           "items": {
             "type": "string"
           }
@@ -73,7 +80,7 @@
         "pubspecOverrides.gitRepos": {
           "type": "array",
           "default": [],
-          "markdownDescription": "Git-Repos for Overrides. `name` is the package name, `url` is the Git URL, `path` is optional for packages in monorepos.",
+          "markdownDescription": "Git repos for overrides. `name` is the package name, `url` is the Git URL, `path` is optional for packages in monorepos.",
           "items": {
             "type": "object",
             "required": [
@@ -83,7 +90,7 @@
             "properties": {
               "name": {
                 "type": "string",
-                "description": "Package name (like in its pubspec.yaml)"
+                "description": "Package name (as in its pubspec.yaml)"
               },
               "url": {
                 "type": "string",
@@ -91,7 +98,7 @@
               },
               "path": {
                 "type": "string",
-                "description": "Optional: Subdirectory in the repo (Monorepo)"
+                "description": "Optional: subdirectory in the repo (monorepo)"
               }
             }
           }
@@ -99,7 +106,7 @@
         "pubspecOverrides.defaultRef": {
           "type": "string",
           "default": "",
-          "description": "Fallback for the Git reference, if current Branch not can be determined (e.g., detached HEAD)."
+          "description": "Fallback for the Git reference if the current branch cannot be determined (e.g., detached HEAD)."
         },
         "pubspecOverrides.runPubGet": {
           "type": "boolean",
@@ -110,6 +117,11 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically confirm and bypass the warning when overriding a package with a different type (local <-> git)."
+        },
+        "pubspecOverrides.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show clickable actions (add/remove/switch override, remove package) above the package names in pubspec.yaml."
         }
       }
     }
