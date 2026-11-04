@@ -1,0 +1,117 @@
+{
+  "name": "flutter-dependency-override-helper",
+  "displayName": "Flutter Dependency Override Helper",
+  "description": "Quick insert local or git dependency_overrides in pubspec",
+  "version": "0.2.0",
+  "publisher": "NiklasWeiblen",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "dart",
+    "flutter",
+    "pubspec",
+    "dependency_overrides"
+  ],
+  "main": "./extension.js",
+  "icon": "icon.png",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "pubspecOverrides.add",
+        "title": "Pubspec Overrides: Add Override"
+      },
+      {
+        "command": "pubspecOverrides.addLocal",
+        "title": "Pubspec Overrides: Add Local Package"
+      },
+      {
+        "command": "pubspecOverrides.addGit",
+        "title": "Pubspec Overrides: Add Git Reference"
+      },
+      {
+        "command": "pubspecOverrides.remove",
+        "title": "Pubspec Overrides: Remove Override"
+      },
+      {
+        "command": "pubspecOverrides.removeAll",
+        "title": "Pubspec Overrides: Remove All Overrides"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "pubspecOverrides.add",
+          "when": "resourceFilename == pubspec.yaml",
+          "group": "navigation@99"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Flutter Pubspec Overrides",
+      "properties": {
+        "pubspecOverrides.packagesFolders": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Directories in which your local packages lie (absolute or relative to the workspace; `${workspaceFolder}` and `~` are supported).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pubspecOverrides.scanDepth": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "How many levels below the packages folders to search for pubspec.yaml."
+        },
+        "pubspecOverrides.gitRepos": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Git-Repos for Overrides. `name` is the package name, `url` is the Git URL, `path` is optional for packages in monorepos.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "url"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Package name (like in its pubspec.yaml)"
+              },
+              "url": {
+                "type": "string",
+                "description": "Git URL"
+              },
+              "path": {
+                "type": "string",
+                "description": "Optional: Subdirectory in the repo (Monorepo)"
+              }
+            }
+          }
+        },
+        "pubspecOverrides.defaultRef": {
+          "type": "string",
+          "default": "",
+          "description": "Fallback for the Git reference, if current Branch not can be determined (e.g., detached HEAD)."
+        },
+        "pubspecOverrides.runPubGet": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run 'dart pub get' or 'flutter pub get' after making changes."
+        },
+        "pubspecOverrides.autoConfirmTypeConflict": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically confirm and bypass the warning when overriding a package with a different type (local <-> git)."
+        }
+      }
+    }
+  }
+}
