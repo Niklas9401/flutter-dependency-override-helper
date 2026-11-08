@@ -1,0 +1,171 @@
+{
+  "name": "flutter-dependency-override-helper",
+  "displayName": "Flutter Dependency Override Helper",
+  "description": "Quick insert local or git dependency_overrides in pubspec",
+  "version": "1.0.0",
+  "publisher": "NiklasWeiblen",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "dart",
+    "flutter",
+    "pubspec",
+    "dependency_overrides"
+  ],
+  "main": "./extension.js",
+  "icon": "icon.png",
+  "activationEvents": [
+    "onLanguage:yaml",
+    "workspaceContains:**/pubspec.yaml"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "pubspecOverrides.add",
+        "title": "Pubspec Overrides: Add Override"
+      },
+      {
+        "command": "pubspecOverrides.addLocal",
+        "title": "Pubspec Overrides: Add Local Package"
+      },
+      {
+        "command": "pubspecOverrides.addGit",
+        "title": "Pubspec Overrides: Add Git Reference"
+      },
+      {
+        "command": "pubspecOverrides.upgrade",
+        "title": "Pubspec Overrides: Upgrade Packages"
+      },
+      {
+        "command": "pubspecOverrides.remove",
+        "title": "Pubspec Overrides: Remove Override"
+      },
+      {
+        "command": "pubspecOverrides.removeAll",
+        "title": "Pubspec Overrides: Remove All Overrides"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "pubspecOverrides.add",
+          "when": "resourceFilename == pubspec.yaml",
+          "group": "navigation@99"
+        }
+      ]
+    },
+    "configuration": [
+      {
+        "title": "Pubspec Overrides",
+        "order": 1,
+        "properties": {
+          "pubspecOverrides.packagesFolders": {
+            "type": "array",
+            "default": [],
+            "markdownDescription": "Directories in which your local packages are located (absolute or relative to the workspace; `${workspaceFolder}` and `~` are supported).",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pubspecOverrides.scanDepth": {
+            "type": "number",
+            "default": 2,
+            "minimum": 1,
+            "maximum": 5,
+            "description": "How many levels below the packages folders to search for pubspec.yaml."
+          },
+          "pubspecOverrides.gitRepos": {
+            "type": "array",
+            "default": [],
+            "markdownDescription": "Git repos for overrides. `name` is the package name, `url` is the Git URL, `path` is optional for packages in monorepos.",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "url"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Package name (as in its pubspec.yaml)"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "Git URL"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "Optional: subdirectory in the repo (monorepo)"
+                }
+              }
+            }
+          },
+          "pubspecOverrides.defaultRef": {
+            "type": "string",
+            "default": "",
+            "description": "Fallback for the Git reference if the current branch cannot be determined (e.g., detached HEAD)."
+          },
+          "pubspecOverrides.runPubGet": {
+            "type": "boolean",
+            "default": false,
+            "description": "Automatically run 'dart pub get' or 'flutter pub get' after making changes."
+          },
+          "pubspecOverrides.autoConfirmTypeConflict": {
+            "type": "boolean",
+            "default": false,
+            "description": "Automatically confirm and bypass the warning when overriding a package with a different type (local <-> git)."
+          }
+        }
+      },
+      {
+        "title": "Pubspec Overrides: CodeLens Actions",
+        "order": 2,
+        "properties": {
+          "pubspecOverrides.codeLens.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Master switch for all CodeLens actions: the clickable links (Upgrade package, Add override, Remove package, Remove override, Switch to Local/Git) shown above the package names in pubspec.yaml. Use the settings below to hide single actions."
+          },
+          "pubspecOverrides.codeLens.actions.upgradePackage": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show the \"Upgrade package\" CodeLens link above packages in dependencies/dev_dependencies (runs 'pub upgrade <package>')."
+          },
+          "pubspecOverrides.codeLens.actions.addOverride": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show the \"Add override\" CodeLens link above packages that are available as local package or configured Git repo."
+          },
+          "pubspecOverrides.codeLens.actions.removePackage": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show the \"Remove package\" CodeLens link above packages in dependencies/dev_dependencies."
+          },
+          "pubspecOverrides.codeLens.actions.removeOverride": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show the \"Remove override\" CodeLens link above entries in dependency_overrides."
+          },
+          "pubspecOverrides.codeLens.actions.switchToLocal": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show the \"Switch to Local\" CodeLens link above overrides whose package is available locally."
+          },
+          "pubspecOverrides.codeLens.actions.switchToGit": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show the \"Switch to Git\" CodeLens link above overrides whose package is configured as Git repo."
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node test.js"
+  }
+}

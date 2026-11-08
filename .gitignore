@@ -1,0 +1,14 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+
+# VS Code extension
+node_modules/
+*.vsix
+
+# IntelliJ plugin
+.gradle/
+build/
+.intellijPlatform/
