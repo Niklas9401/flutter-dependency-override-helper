@@ -1,4 +1,4 @@
-package io.github.niklas9401.pubspecoverrides
+package com.niklasweiblen.flutterpubspecoverridehelper
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.ide.plugins.PluginManagerCore
@@ -144,7 +144,7 @@ class PubspecOverridesConfigurable(private val project: Project) : Configurable 
 
     /** Version of the installed plugin, so you can see whether a new build is really in use. */
     private fun pluginVersion(): String =
-        PluginManagerCore.getPlugin(PluginId.getId("io.github.niklas9401.flutter-dependency-override-helper"))?.version ?: "dev"
+        PluginManagerCore.getPlugin(PluginId.getId("com.niklasweiblen.flutterpubspecoverridehelper"))?.version ?: "dev"
 
     /** Button that scans the folders currently shown in the list (also unsaved ones) and reports what it finds. */
     private fun checkFoldersButton(): JComponent {
