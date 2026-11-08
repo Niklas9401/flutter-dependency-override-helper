@@ -15,7 +15,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <projectConfigurable
                 parentId="tools"
-                instance="io.github.niklas9401.pubspecoverrides.PubspecOverridesConfigurable"
+                instance="com.niklasweiblen.flutterpubspecoverridehelper.PubspecOverridesConfigurable"
                 id="com.niklasweiblen.flutterpubspecoverridehelper"
                 displayName="Flutter Pubspec Overrides"
                 nonDefaultProject="true"/>
@@ -23,17 +23,17 @@
         <!-- Inline links above package names ("Code Vision", like "N usages" above functions).
              One provider per link: a provider can only show one link per line. -->
         <codeInsight.daemonBoundCodeVisionProvider
-                implementation="io.github.niklas9401.pubspecoverrides.UpgradePackageInlineProvider"/>
+                implementation="com.niklasweiblen.flutterpubspecoverridehelper.UpgradePackageInlineProvider"/>
         <codeInsight.daemonBoundCodeVisionProvider
-                implementation="io.github.niklas9401.pubspecoverrides.AddOverrideInlineProvider"/>
+                implementation="com.niklasweiblen.flutterpubspecoverridehelper.AddOverrideInlineProvider"/>
         <codeInsight.daemonBoundCodeVisionProvider
-                implementation="io.github.niklas9401.pubspecoverrides.RemovePackageInlineProvider"/>
+                implementation="com.niklasweiblen.flutterpubspecoverridehelper.RemovePackageInlineProvider"/>
         <codeInsight.daemonBoundCodeVisionProvider
-                implementation="io.github.niklas9401.pubspecoverrides.RemoveOverrideInlineProvider"/>
+                implementation="com.niklasweiblen.flutterpubspecoverridehelper.RemoveOverrideInlineProvider"/>
         <codeInsight.daemonBoundCodeVisionProvider
-                implementation="io.github.niklas9401.pubspecoverrides.SwitchToLocalInlineProvider"/>
+                implementation="com.niklasweiblen.flutterpubspecoverridehelper.SwitchToLocalInlineProvider"/>
         <codeInsight.daemonBoundCodeVisionProvider
-                implementation="io.github.niklas9401.pubspecoverrides.SwitchToGitInlineProvider"/>
+                implementation="com.niklasweiblen.flutterpubspecoverridehelper.SwitchToGitInlineProvider"/>
 
         <notificationGroup id="Pubspec Overrides" displayType="BALLOON"/>
     </extensions>
@@ -44,24 +44,24 @@
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
 
             <action id="PubspecOverrides.Add"
-                    class="io.github.niklas9401.pubspecoverrides.AddOverrideAction"
+                    class="com.niklasweiblen.flutterpubspecoverridehelper.AddOverrideAction"
                     text="Pubspec Overrides: Add Override…"
                     description="Add a local or Git dependency override"/>
             <action id="PubspecOverrides.AddLocal"
-                    class="io.github.niklas9401.pubspecoverrides.AddLocalAction"
+                    class="com.niklasweiblen.flutterpubspecoverridehelper.AddLocalAction"
                     text="Pubspec Overrides: Add Local Package…"/>
             <action id="PubspecOverrides.AddGit"
-                    class="io.github.niklas9401.pubspecoverrides.AddGitAction"
+                    class="com.niklasweiblen.flutterpubspecoverridehelper.AddGitAction"
                     text="Pubspec Overrides: Add Git Reference…"/>
             <action id="PubspecOverrides.UpgradePackages"
-                    class="io.github.niklas9401.pubspecoverrides.UpgradePackagesAction"
+                    class="com.niklasweiblen.flutterpubspecoverridehelper.UpgradePackagesAction"
                     text="Pubspec Overrides: Upgrade Packages…"
                     description="Run 'pub upgrade' for the packages you pick"/>
             <action id="PubspecOverrides.Remove"
-                    class="io.github.niklas9401.pubspecoverrides.RemoveOverrideAction"
+                    class="com.niklasweiblen.flutterpubspecoverridehelper.RemoveOverrideAction"
                     text="Pubspec Overrides: Remove Override…"/>
             <action id="PubspecOverrides.RemoveAll"
-                    class="io.github.niklas9401.pubspecoverrides.RemoveAllOverridesAction"
+                    class="com.niklasweiblen.flutterpubspecoverridehelper.RemoveAllOverridesAction"
                     text="Pubspec Overrides: Remove All Overrides"/>
         </group>
     </actions>
