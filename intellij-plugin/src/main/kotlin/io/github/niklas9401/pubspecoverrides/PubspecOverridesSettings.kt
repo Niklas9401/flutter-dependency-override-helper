@@ -1,4 +1,4 @@
-package io.github.niklas9401.pubspecoverrides
+package com.niklasweiblen.flutterpubspecoverridehelper
 
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
