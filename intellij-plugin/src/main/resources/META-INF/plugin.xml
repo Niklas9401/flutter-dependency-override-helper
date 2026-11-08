@@ -16,7 +16,7 @@
         <projectConfigurable
                 parentId="tools"
                 instance="io.github.niklas9401.pubspecoverrides.PubspecOverridesConfigurable"
-                id="io.github.niklas9401.pubspecoverrides.settings"
+                id="com.niklasweiblen.flutterpubspecoverridehelper"
                 displayName="Flutter Pubspec Overrides"
                 nonDefaultProject="true"/>
 
