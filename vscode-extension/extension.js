@@ -66,12 +66,14 @@ function activate(context) {
   reg('pubspecOverrides.addGit', cmdAddGit);
   reg('pubspecOverrides.remove', cmdRemove);
   reg('pubspecOverrides.removeAll', cmdRemoveAll);
+  reg('pubspecOverrides.upgrade', cmdUpgrade);
 
   // Internal commands triggered by the CodeLens links (intentionally not in package.json).
   reg('pubspecOverrides.codeLens.addOverride', lensAddOverride);
   reg('pubspecOverrides.codeLens.removeOverride', lensRemoveOverride);
   reg('pubspecOverrides.codeLens.switchOverride', lensSwitchOverride);
   reg('pubspecOverrides.codeLens.removePackage', lensRemovePackage);
+  reg('pubspecOverrides.codeLens.upgradePackage', lensUpgradePackage);
 
   // Inline links above the package names in every pubspec.yaml.
   const provider = new PubspecCodeLensProvider();
@@ -94,15 +96,20 @@ function activate(context) {
  * the package names of a pubspec.yaml:
  *
  *  - on `dependencies` / `dev_dependencies` entries:
- *      "Add override"   – only if the package is available in the configured
- *                         local folders or Git repos and not yet overridden
- *      "Remove package" – removes the dependency
+ *      "Upgrade package" – runs `pub upgrade <name>` in a terminal
+ *      "Add override"    – only if the package is available in the configured
+ *                          local folders or Git repos and not yet overridden
+ *      "Remove package"  – removes the dependency
  *  - on `dependency_overrides` entries:
  *      "Remove override"
  *      "Switch to Local" / "Switch to Git" – only if the package is available
- *                         as the other type
+ *                          as the other type
  *
  * SDK dependencies (`flutter`, `flutter_test`, …) get no links.
+ *
+ * The whole feature can be switched off with `pubspecOverrides.codeLens.enabled`;
+ * every single link can be hidden with `pubspecOverrides.codeLens.actions.<action>`
+ * (all default to true).
  */
 class PubspecCodeLensProvider {
   constructor() {
@@ -126,6 +133,9 @@ class PubspecCodeLensProvider {
     const cfg = vscode.workspace.getConfiguration('pubspecOverrides', document.uri);
     if (!cfg.get('codeLens.enabled', true)) return [];
 
+    /** True unless the user switched this single link off in the settings. */
+    const on = (action) => cfg.get(`codeLens.actions.${action}`, true);
+
     const entries = ps.listPackageEntries(document.getText());
     const localByName = new Map(getLocalPackages(document.uri).map((p) => [p.name, p]));
     const gitByName = new Map(getGitRepos(cfg).map((r) => [r.name, r]));
@@ -144,28 +154,36 @@ class PubspecCodeLensProvider {
     const add = (line, title, command, args, tooltip) =>
       lenses.push(new vscode.CodeLens(new vscode.Range(line, 0, line, 0), { title, command, arguments: args, tooltip }));
 
-    // Regular dependencies: add an override / remove the package.
+    // Regular dependencies: upgrade / add an override / remove the package.
     for (const section of ['dependencies', 'dev_dependencies']) {
       for (const e of entries[section]) {
         if (e.type === 'sdk') continue; // flutter, flutter_test, … – nothing sensible to do
-        if (!overridden.has(e.name) && (localByName.has(e.name) || gitByName.has(e.name))) {
+        if (on('upgradePackage')) {
+          add(e.line, '$(arrow-up) Upgrade package', 'pubspecOverrides.codeLens.upgradePackage', [document.uri, e.name],
+            `Run "pub upgrade ${e.name}"`);
+        }
+        if (on('addOverride') && !overridden.has(e.name) && (localByName.has(e.name) || gitByName.has(e.name))) {
           add(e.line, '$(add) Add override', 'pubspecOverrides.codeLens.addOverride', [document.uri, e.name],
             `Override "${e.name}" with a local package or a Git reference`);
         }
-        add(e.line, '$(trash) Remove package', 'pubspecOverrides.codeLens.removePackage', [document.uri, e.name, section],
-          `Remove "${e.name}" from ${section}`);
+        if (on('removePackage')) {
+          add(e.line, '$(trash) Remove package', 'pubspecOverrides.codeLens.removePackage', [document.uri, e.name, section],
+            `Remove "${e.name}" from ${section}`);
+        }
       }
     }
 
     // Existing overrides: remove / switch to the other type (if available).
     for (const e of entries.dependency_overrides) {
-      add(e.line, '$(trash) Remove override', 'pubspecOverrides.codeLens.removeOverride', [document.uri, e.name],
-        `Remove the override of "${e.name}"`);
-      if (e.type !== 'local' && localByName.has(e.name)) {
+      if (on('removeOverride')) {
+        add(e.line, '$(trash) Remove override', 'pubspecOverrides.codeLens.removeOverride', [document.uri, e.name],
+          `Remove the override of "${e.name}"`);
+      }
+      if (on('switchToLocal') && e.type !== 'local' && localByName.has(e.name)) {
         add(e.line, '$(arrow-swap) Switch to Local', 'pubspecOverrides.codeLens.switchOverride', [document.uri, e.name, 'local'],
           `Use the local package of "${e.name}" instead`);
       }
-      if (e.type !== 'git' && gitByName.has(e.name)) {
+      if (on('switchToGit') && e.type !== 'git' && gitByName.has(e.name)) {
         add(e.line, '$(arrow-swap) Switch to Git', 'pubspecOverrides.codeLens.switchOverride', [document.uri, e.name, 'git'],
           `Use the configured Git repository of "${e.name}" instead`);
       }
@@ -234,6 +252,37 @@ async function lensSwitchOverride(_context, uri, name, target) {
 async function lensRemoveOverride(_context, uri, name) {
   const { doc, text } = await readPubspec(uri);
   await writePubspec(doc, ps.removeOverrides(text, [name]));
+}
+
+/**
+ * CodeLens action "Upgrade package": runs `pub upgrade <name>` for exactly this package in a
+ * terminal next to the pubspec (`flutter pub upgrade` for Flutter projects, `dart pub upgrade` otherwise).
+ * Unsaved changes are saved first, because pub reads the pubspec from disk.
+ *
+ * @param {vscode.ExtensionContext} _context Unused.
+ * @param {vscode.Uri} uri  The pubspec.
+ * @param {string}     name Package name.
+ * @returns {Promise<void>}
+ */
+async function lensUpgradePackage(_context, uri, name) {
+  await upgradePackages(uri, [name]);
+}
+
+/**
+ * Runs `pub upgrade <names…>` in a terminal next to the pubspec, after saving unsaved changes.
+ *
+ * @param {vscode.Uri} uri   The pubspec.
+ * @param {string[]}   names Packages to upgrade (exactly these, nothing else).
+ * @returns {Promise<void>}
+ */
+async function upgradePackages(uri, names) {
+  // The names end up in a shell command → only accept valid Dart package names.
+  for (const name of names) {
+    if (!/^[A-Za-z0-9_]+$/.test(name)) throw new Error(`Invalid package name: ${name}`);
+  }
+  const { doc, text } = await readPubspec(uri);
+  if (doc.isDirty) await doc.save(); // pub reads the pubspec from disk
+  runPub(uri, text, `upgrade ${names.join(' ')}`);
 }
 
 /**
@@ -336,7 +385,7 @@ async function resolvePubspec() {
 /**
  * Opens a pubspec as a VS Code document and reads its current text.
  * Going through the document (not the file system) means unsaved editor
- * changes are taken into acount.
+ * changes are taken into account.
  *
  * @param {vscode.Uri} uri Location of the pubspec.yaml.
  * @returns {Promise<{doc: vscode.TextDocument, text: string}>}
@@ -351,7 +400,7 @@ async function readPubspec(uri) {
  *
  * The change is applied as a regular workspace edit, so the user can undo it
  * with Ctrl/Cmd+Z. If the setting `pubspecOverrides.runPubGet` is enabled,
- * `dart pub get` or `flutter pub get` is started in a termnal afterwards.
+ * `dart pub get` or `flutter pub get` is started in a terminal afterwards.
  *
  * @param {vscode.TextDocument} doc     The pubspec document.
  * @param {string}              newText The new complete file content.
@@ -365,12 +414,23 @@ async function writePubspec(doc, newText) {
   await doc.save();
 
   if (vscode.workspace.getConfiguration('pubspecOverrides', doc.uri).get('runPubGet')) {
-    // Flutter projects need `flutter pub get`, plain Dart packages `dart pub get`.
-    const cmd = ps.usesFlutter(newText) ? 'flutter pub get' : 'dart pub get';
-    const term = vscode.window.createTerminal({ name: 'Pubspec Overrides', cwd: path.dirname(doc.uri.fsPath) });
-    term.show(true); // true = don't steal keyboard focus from the editor
-    term.sendText(cmd);
+    runPub(doc.uri, newText, 'get');
   }
+}
+
+/**
+ * Runs `flutter pub <args>` or `dart pub <args>` in a new terminal located next to the pubspec.
+ * Flutter projects need the `flutter` tool, plain Dart packages the `dart` tool.
+ *
+ * @param {vscode.Uri} uri  The pubspec.
+ * @param {string}     text Its content (used to detect whether it is a Flutter project).
+ * @param {string}     args Everything after `pub`, e.g. `get` or `upgrade my_package`. Must be trusted/validated.
+ */
+function runPub(uri, text, args) {
+  const tool = ps.usesFlutter(text) ? 'flutter' : 'dart';
+  const term = vscode.window.createTerminal({ name: 'Pubspec Overrides', cwd: path.dirname(uri.fsPath) });
+  term.show(true); // true = don't steal keyboard focus from the editor
+  term.sendText(`${tool} pub ${args}`);
 }
 
 // ---------- Type check & warning on type change ----------
@@ -567,6 +627,33 @@ async function cmdAddGit() {
 
   await writePubspec(doc, ps.applyOverrides(doc.getText(), entries));
   vscode.window.showInformationMessage(`${entries.length} Git-Override(s) set.`);
+}
+
+/**
+ * Command "Upgrade packages…": pick one or more dependencies and upgrade exactly those.
+ * Works without the CodeLens links, e.g. when CodeLens is switched off.
+ *
+ * @returns {Promise<void>}
+ */
+async function cmdUpgrade() {
+  const uri = await resolvePubspec();
+  if (!uri) return;
+  const { text } = await readPubspec(uri);
+  const entries = ps.listPackageEntries(text);
+  const names = [...new Set(
+    ['dependencies', 'dev_dependencies']
+      .flatMap((section) => entries[section])
+      .filter((e) => e.type !== 'sdk') // flutter, flutter_test, … can't be upgraded individually
+      .map((e) => e.name)
+  )];
+  if (!names.length) return void vscode.window.showInformationMessage('No packages found in dependencies / dev_dependencies.');
+
+  const picked = await vscode.window.showQuickPick(names, {
+    canPickMany: true,
+    placeHolder: 'Which packages to upgrade?',
+  });
+  if (!picked?.length) return;
+  await upgradePackages(uri, picked);
 }
 
 /**

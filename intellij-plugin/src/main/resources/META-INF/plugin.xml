@@ -1,0 +1,68 @@
+<idea-plugin>
+    <id>io.github.niklas9401.flutter-dependency-override-helper</id>
+    <name>Flutter Dependency Override Helper</name>
+    <vendor>Niklas Weiblen</vendor>
+
+    <description><![CDATA[
+        Quickly insert <code>dependency_overrides</code> into a <code>pubspec.yaml</code>:
+        local paths or Git references. Includes clickable inline actions above the package names
+        (add / remove / switch override, remove package).
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.yaml</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <projectConfigurable
+                parentId="tools"
+                instance="io.github.niklas9401.pubspecoverrides.PubspecOverridesConfigurable"
+                id="io.github.niklas9401.pubspecoverrides.settings"
+                displayName="Flutter Pubspec Overrides"
+                nonDefaultProject="true"/>
+
+        <!-- Inline links above package names ("Code Vision", like "N usages" above functions).
+             One provider per link: a provider can only show one link per line. -->
+        <codeInsight.daemonBoundCodeVisionProvider
+                implementation="io.github.niklas9401.pubspecoverrides.UpgradePackageInlineProvider"/>
+        <codeInsight.daemonBoundCodeVisionProvider
+                implementation="io.github.niklas9401.pubspecoverrides.AddOverrideInlineProvider"/>
+        <codeInsight.daemonBoundCodeVisionProvider
+                implementation="io.github.niklas9401.pubspecoverrides.RemovePackageInlineProvider"/>
+        <codeInsight.daemonBoundCodeVisionProvider
+                implementation="io.github.niklas9401.pubspecoverrides.RemoveOverrideInlineProvider"/>
+        <codeInsight.daemonBoundCodeVisionProvider
+                implementation="io.github.niklas9401.pubspecoverrides.SwitchToLocalInlineProvider"/>
+        <codeInsight.daemonBoundCodeVisionProvider
+                implementation="io.github.niklas9401.pubspecoverrides.SwitchToGitInlineProvider"/>
+
+        <notificationGroup id="Pubspec Overrides" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <group id="PubspecOverrides.Group" text="Pubspec Overrides" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+
+            <action id="PubspecOverrides.Add"
+                    class="io.github.niklas9401.pubspecoverrides.AddOverrideAction"
+                    text="Pubspec Overrides: Add Override…"
+                    description="Add a local or Git dependency override"/>
+            <action id="PubspecOverrides.AddLocal"
+                    class="io.github.niklas9401.pubspecoverrides.AddLocalAction"
+                    text="Pubspec Overrides: Add Local Package…"/>
+            <action id="PubspecOverrides.AddGit"
+                    class="io.github.niklas9401.pubspecoverrides.AddGitAction"
+                    text="Pubspec Overrides: Add Git Reference…"/>
+            <action id="PubspecOverrides.UpgradePackages"
+                    class="io.github.niklas9401.pubspecoverrides.UpgradePackagesAction"
+                    text="Pubspec Overrides: Upgrade Packages…"
+                    description="Run 'pub upgrade' for the packages you pick"/>
+            <action id="PubspecOverrides.Remove"
+                    class="io.github.niklas9401.pubspecoverrides.RemoveOverrideAction"
+                    text="Pubspec Overrides: Remove Override…"/>
+            <action id="PubspecOverrides.RemoveAll"
+                    class="io.github.niklas9401.pubspecoverrides.RemoveAllOverridesAction"
+                    text="Pubspec Overrides: Remove All Overrides"/>
+        </group>
+    </actions>
+</idea-plugin>

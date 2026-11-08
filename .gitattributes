@@ -1,0 +1,6 @@
+* text=auto
+# The Gradle wrapper script must keep LF line endings, otherwise it breaks on macOS/Linux/CI.
+gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.png binary

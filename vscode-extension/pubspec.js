@@ -2,6 +2,12 @@
 
 /**
  * Pure text processing for pubspec.yaml files.
+ *
+ * This module intentionally has NO dependency on the VS Code API (and no YAML
+ * library): it edits sections line by line so that comments, ordering and
+ * formatting in the rest of the file stay untouched. Because it is
+ * dependency-free it can be unit-tested with plain Node.
+ */
 
 /** Name of the top-level pubspec key that holds the overrides. */
 const SECTION = 'dependency_overrides';
