@@ -1,4 +1,4 @@
-package io.github.niklas9401.pubspecoverrides
+package com.niklasweiblen.flutterpubspecoverridehelper
 
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap

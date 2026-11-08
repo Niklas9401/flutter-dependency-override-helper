@@ -1,4 +1,4 @@
-package io.github.niklas9401.pubspecoverrides
+package com.niklasweiblen.flutterpubspecoverridehelper
 
 /**
  * Pure text processing for pubspec.yaml files (Kotlin port of `pubspec.js` from the VS Code extension).

@@ -1,4 +1,4 @@
-package io.github.niklas9401.pubspecoverrides
+package com.niklasweiblen.flutterpubspecoverridehelper
 
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.ActionUpdateThread

@@ -4,7 +4,7 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.2.1"
 }
 
-group = "io.github.niklas9401"
+group = "com.niklasweiblen"
 // The release pipeline passes the version from the git tag: gradle ... -PpluginVersion=1.2.3
 version = providers.gradleProperty("pluginVersion").getOrElse("1.0.1")
 

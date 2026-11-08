@@ -1,6 +1,6 @@
-package io.github.niklas9401.pubspecoverrides
+package com.niklasweiblen.flutterpubspecoverridehelper
 
-import io.github.niklas9401.pubspecoverrides.PubspecEditor.EntryType
+import com.niklasweiblen.flutterpubspecoverridehelper.PubspecEditor.EntryType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
